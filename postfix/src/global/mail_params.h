@@ -3049,6 +3049,10 @@ extern char *var_tls_eecdh_ultra;
 #define DEF_TLS_PREEMPT_CLIST	0
 extern bool var_tls_preempt_clist;
 
+#define VAR_TLS_MULTI_WILDCARD	"tls_wildcard_matches_multiple_labels"
+#define DEF_TLS_MULTI_WILDCARD	1
+extern bool var_tls_multi_wildcard;
+
  /* The tweak for CVE-2010-4180 is needed in some versions prior to 1.0.1 */
  /* The tweak for CVE-2005-2969 is needed in some versions prior to 1.0.0 */
 #if defined(USE_TLS) && (OPENSSL_VERSION_NUMBER < 0x1000100fL)

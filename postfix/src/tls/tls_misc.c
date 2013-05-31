@@ -16,9 +16,10 @@
 /*	char	*var_tls_eecdh_ultra;
 /*	char	*var_tls_dane_ta_dgst;
 /*	int	var_tls_daemon_rand_bytes;
-/*	bool    var_tls_append_def_CA;
+/*	bool	var_tls_append_def_CA;
 /*	bool	var_tls_preempt_clist;
 /*	bool	var_tls_bc_pkey_fprint;
+/*	bool	var_tls_multi_wildcard;
 /*
 /*	TLS_APPL_STATE *tls_alloc_app_context(ssl_ctx, log_mask)
 /*	SSL_CTX	*ssl_ctx;
@@ -223,6 +224,7 @@ bool    var_tls_append_def_CA;
 char   *var_tls_bug_tweaks;
 char   *var_tls_ssl_options;
 bool    var_tls_bc_pkey_fprint;
+bool    var_tls_multi_wildcard;
 
 #ifdef VAR_TLS_PREEMPT_CLIST
 bool    var_tls_preempt_clist;
@@ -602,6 +604,7 @@ void    tls_param_init(void)
 	VAR_TLS_APPEND_DEF_CA, DEF_TLS_APPEND_DEF_CA, &var_tls_append_def_CA,
 	VAR_TLS_BC_PKEY_FPRINT, DEF_TLS_BC_PKEY_FPRINT, &var_tls_bc_pkey_fprint,
 	VAR_TLS_PREEMPT_CLIST, DEF_TLS_PREEMPT_CLIST, &var_tls_preempt_clist,
+	VAR_TLS_MULTI_WILDCARD, DEF_TLS_MULTI_WILDCARD, &var_tls_multi_wildcard,
 	0,
     };
     static int init_done;

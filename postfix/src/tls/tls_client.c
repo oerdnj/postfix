@@ -540,13 +540,16 @@ static int match_hostname(const char *peerid,
 
 	/*
 	 * Exact match and initial "*" match. The initial "*" in a peerid
-	 * matches exactly one hostname component, under the condition that
-	 * the peerid contains multiple hostname components.
+	 * matches one (if var_tls_multi_label is false) or more hostname
+	 * components under the condition that the peerid contains multiple
+	 * hostname components.
 	 */
 	if (!strcasecmp(peerid, pattern)
 	    || (peerid[0] == '*' && peerid[1] == '.' && peerid[2] != 0
-		&& (pattern_left = strchr(pattern, '.')) != 0
-		&& strcasecmp(pattern_left + 1, peerid + 2) == 0))
+	        && (pattern = strchr(pattern, '.')) != 0
+		&& (idlen = strlen(peerid+1)) <= (patlen = strlen(pattern))
+		&& strcasecmp(var_tls_multi_wildcard == 0 ? pattern :
+			      pattern + (patlen - idlen), peerid+1) == 0))
 	    return (1);
     }
     return (0);

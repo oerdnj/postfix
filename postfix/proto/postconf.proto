@@ -15334,3 +15334,28 @@ and compression before encryption does not always improve security.  </dd>
 
 <p> This feature is available in Postfix 2.11 and later.  </p>
 
+%PARAM tls_wildcard_matches_multiple_labels yes
+
+<p> Match multiple DNS labels with "*" in wildcard certificates.  </p>
+
+<p> Some MX hosting prepend the client domain to a base domain for
+which they have a wildcard certificate. For example, the MX records for
+example.com hosted by example.net may be: </p>
+
+<blockquote>
+<pre>
+example.com. IN MX 0 example.com.mx1.example.net.
+example.com. IN MX 0 example.com.mx2.example.net.
+</pre>
+</blockquote>
+
+<p> with certificate for "*.example.net".  While multi-label wildcards
+are not widely supported, and are not blessed by any standard, there
+is little to be gained by disallowing their use in this context.
+Note, that while the Postfix SMTP client (2.11 or later) will match
+such certificates, other SMTP clients likely will not.  So SMTP servers
+should not rely on such certificates being compatible with client software.
+</p>
+
+<p> This feature is available in Postfix 2.11 and later.  </p>
+
