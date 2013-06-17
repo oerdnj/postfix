@@ -133,6 +133,7 @@
 #include <hex_code.h>
 #include <myflock.h>
 #include <vstring.h>
+#include <timecmp.h>
 
 /* Global library. */
 
@@ -149,6 +150,8 @@ typedef struct {
     time_t  timestamp;			/* time when saved */
     char    session[1];			/* actually a bunch of bytes */
 } TLS_SCACHE_ENTRY;
+
+static TLS_TICKET_KEY *keys[2];
 
  /*
   * SLMs.
@@ -502,6 +505,60 @@ void    tls_scache_close(TLS_SCACHE *cp)
     if (cp->saved_cursor)
 	myfree(cp->saved_cursor);
     myfree((char *) cp);
+}
+
+/* tls_scache_key - find session ticket key for given key name */
+
+TLS_TICKET_KEY *tls_scache_key(unsigned char *name, time_t now, int timeout)
+{
+    int     i;
+
+    /*
+     * The keys array contains 2 elements, the current signing key and the
+     * previous key.
+     *
+     * When name == 0 we are issuing a ticket, otherwise decrypting an
+     * existing ticket with the given key name.  For new tickets we always
+     * use the current key if unexpired.  For existing tickets, we use either
+     * the current or previous key with a validation expiration that is
+     * timeout longer than the signing expiration.
+     */
+    if (name) {
+	for(i = 0; i < 2 && keys[i]; ++i) {
+	    if (memcmp(name, keys[i]->name, TLS_TICKET_NAMELEN) == 0) {
+		if (timecmp(keys[i]->tout + timeout, now) > 0)
+		    return (keys[i]);
+		break;
+	    }
+	}
+    } else if (keys[0]) {
+	if (timecmp(keys[0]->tout, now) > 0)
+	    return (keys[0]);
+    }
+    return (0);
+}
+
+/* tls_scache_key_rotate - rotate session ticket keys */
+
+TLS_TICKET_KEY *tls_scache_key_rotate(TLS_TICKET_KEY *new)
+{
+
+    /*
+     * Allocate or re-use storage of retired key, then overwrite it, since
+     * caller's key data is ephemeral. Finally rotate if required.
+     */
+    if (keys[1] && keys[1]->tout > keys[0]->tout) {
+	memcpy(keys[0], new, sizeof(*new));
+	new = keys[0];
+    } else {
+	if (keys[1] == 0)
+	    keys[1] = (TLS_TICKET_KEY *) mymalloc(sizeof(*new));
+	memcpy(keys[1], new, sizeof(*new));
+	new = keys[1];
+	keys[1] = keys[0];
+	keys[0] = new;
+    }
+    return (new);
 }
 
 #endif
