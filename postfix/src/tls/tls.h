@@ -197,6 +197,7 @@ typedef struct {
     /* Private. */
     SSL    *con;
     char   *cache_type;			/* tlsmgr(8) cache type if enabled */
+    int     ticketed;			/* Session ticket issued */
     char   *serverid;			/* unique server identifier */
     char   *namaddr;			/* nam[addr] for logging */
     int     log_mask;			/* What to log */

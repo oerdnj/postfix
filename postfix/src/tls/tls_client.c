@@ -249,14 +249,14 @@ static int new_client_session_cb(SSL *ssl, SSL_SESSION *session)
      */
     SSL_SESSION_free(session);			/* 200502 */
 
-    return (1);
+    return (TLScontext->ticketed = 1);
 }
 
 /* uncache_session - remove session from the external cache */
 
 static void uncache_session(SSL_CTX *ctx, TLS_SESS_STATE *TLScontext)
 {
-    SSL_SESSION *session = SSL_get_session(TLScontext->con);
+    SSL_SESSION *session = SSL_get0_session(TLScontext->con);
 
     SSL_CTX_remove_session(ctx, session);
     if (TLScontext->cache_type == 0 || TLScontext->serverid == 0)
@@ -743,6 +743,8 @@ TLS_SESS_STATE *tls_client_start(const TLS_CLIENT_START_PROPS *props)
     int     protomask;
     const char *cipher_list;
     SSL_SESSION *session = 0;
+    const unsigned char *sid = 0;
+    unsigned int sidlen = 0;
     const SSL_CIPHER *cipher;
     X509   *peercert;
     TLS_SESS_STATE *TLScontext;
@@ -858,18 +860,6 @@ TLS_SESS_STATE *tls_client_start(const TLS_CLIENT_START_PROPS *props)
     if (protomask != 0)
 	SSL_set_options(TLScontext->con, TLS_SSL_OP_PROTOMASK(protomask));
 
-    /*
-     * XXX To avoid memory leaks we must always call SSL_SESSION_free() after
-     * calling SSL_set_session(), regardless of whether or not the session
-     * will be reused.
-     */
-    if (TLScontext->cache_type) {
-	session = load_clnt_session(TLScontext);
-	if (session) {
-	    SSL_set_session(TLScontext->con, session);
-	    SSL_SESSION_free(session);		/* 200411 */
-	}
-    }
 #ifdef TLSEXT_MAXLEN_host_name
     if (props->tls_level == TLS_LEV_DANE
 	&& strlen(props->host) <= TLSEXT_MAXLEN_host_name) {
@@ -947,6 +937,23 @@ TLS_SESS_STATE *tls_client_start(const TLS_CLIENT_START_PROPS *props)
     tls_dane_set_callback(app_ctx->ssl_ctx, TLScontext);
 
     /*
+     * XXX To avoid memory leaks we must always call SSL_SESSION_free() after
+     * calling SSL_set_session(), regardless of whether or not the session
+     * will be reused.
+     */
+    if (TLScontext->cache_type) {
+	session = load_clnt_session(TLScontext);
+	if (session) {
+	    SSL_set_session(TLScontext->con, session);
+#if defined(SSL_OP_NO_TICKET) && !defined(OPENSSL_NO_TLSEXT)
+	    sid = SSL_SESSION_get_id(session, &sidlen);
+	    sid = sidlen ? memcpy(mymalloc(sidlen), sid, sidlen) : 0;
+#endif
+	    SSL_SESSION_free(session);
+	}
+    }
+
+    /*
      * Start TLS negotiations. This process is a black box that invokes our
      * call-backs for certificate verification.
      * 
@@ -955,6 +962,49 @@ TLS_SESS_STATE *tls_client_start(const TLS_CLIENT_START_PROPS *props)
      */
     sts = tls_bio_connect(vstream_fileno(props->stream), props->timeout,
 			  TLScontext);
+
+#if defined(SSL_OP_NO_TICKET) && !defined(OPENSSL_NO_TLSEXT)
+    if (sid) {
+
+	/*
+	 * Update cached session if session id changes (reissued ticket)
+	 * 
+	 * XXX: OpenSSL bug, with session tickets, servers never offer a new
+	 * session, instead they offer a new session ticket, but OpenSSL in
+	 * that case updates the reloaded session in place, without calling
+	 * the client new session callback.  A client that does not detect
+	 * this will keep trying to re-use an expired session, doing full
+	 * public key handshakes each time!
+	 * 
+	 * Fortunately, when this happens the session id changes, and we can
+	 * test for that and do what OpenSSL should have done.  Since this
+	 * bug will be fixed some day, we set TLScontext->ticketed in the new
+	 * session callback, and check for that here, ensuring that the
+	 * callback is called at most once when OpenSSL is repaired.
+	 * 
+	 * This code also handles replacement a ticket with a fresh ticket when
+	 * a server accepts the session, but issues a new ticket for the next
+	 * session.
+	 * 
+	 * XXX: To test mid-session ticket refresh against a Postfix server,
+	 * compile the server with -Dsession_ticket_debug.
+	 */
+	if (sts > 0
+	    && TLScontext->ticketed == 0
+	    && TLScontext->cache_type != 0) {
+	    SSL_SESSION *s = SSL_get0_session(TLScontext->con);
+	    unsigned int newsidlen;
+	    const unsigned char *newsid = SSL_SESSION_get_id(s, &newsidlen);
+
+	    if (newsidlen != 0
+		&& (newsidlen != sidlen || memcmp(sid, newsid, sidlen) != 0))
+		new_client_session_cb(TLScontext->con,
+				      SSL_get1_session(TLScontext->con));
+	}
+	myfree((char *) sid);
+    }
+#endif
+
     if (sts <= 0) {
 	if (ERR_peek_error() != 0) {
 	    msg_info("SSL_connect error to %s: %d", props->namaddr, sts);
