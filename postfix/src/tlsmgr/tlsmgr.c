@@ -201,13 +201,13 @@
 #include <set_eugid.h>
 #include <htable.h>
 #include <warn_stat.h>
+#include <timecmp.h>
 
 /* Global library. */
 
 #include <mail_conf.h>
 #include <mail_params.h>
 #include <mail_version.h>
-#include <tls_mgr.h>
 #include <mail_proto.h>
 #include <data_redirect.h>
 
@@ -221,6 +221,7 @@
 #ifdef USE_TLS
 #define TLS_INTERNAL
 #include <tls.h>			/* TLS_MGR_SCACHE_<type> */
+#include <tls_mgr.h>
 #include <tls_prng.h>
 #include <tls_scache.h>
 
@@ -455,6 +456,67 @@ static void tlsmgr_cache_run_event(int unused_event, char *ctx)
 			cache->cache_info->timeout);
 }
 
+/* tlsmgr_tktkey - return matching or current RFC 5077 session ticket keys */
+
+static int tlsmgr_tktkey(VSTRING *buffer)
+{
+    static TLS_TICKET_KEY *curr;
+    static TLS_TICKET_KEY *prev;
+    TLS_TICKET_KEY *new;
+    long    life = var_smtpd_tls_scache_timeout;
+    unsigned char *name = LEN(buffer) ? (unsigned char *) STR(buffer) : 0;
+    time_t  now = time((time_t *) 0);
+
+    if (name && LEN(buffer) != TLS_TICKET_NAMELEN) {
+	msg_warn("invalid session ticket key name");
+	return (TLS_MGR_STAT_ERR);
+    }
+    /* Apply a sensible minimum ticket lifetime */
+    if (life < TLS_TICKET_LIFEMIN)
+	life = TLS_TICKET_LIFEMIN;
+
+    /*
+     * When name == 0 we are issuing a ticket, otherwise decrypting an
+     * existing ticket with the given key name.  For new tickets we always
+     * use the current key if unexpired.  For existing tickets, we use either
+     * the current or previous key with a validitation expiration that is
+     * life/2 longer than the signing expiration.
+     */
+    if (curr
+	&& (name == 0
+	    || memcmp(name, curr->name, TLS_TICKET_NAMELEN) == 0)) {
+	if (timecmp(curr->tout + (name ? life / 2 : 0) + 1, now) >= 0) {
+	    vstring_memcpy(buffer, (char *) curr, sizeof(*curr));
+	    return (TLS_MGR_STAT_OK);
+	}
+    } else if (prev
+	       && name
+	       && memcmp(name, prev->name, TLS_TICKET_NAMELEN) == 0) {
+	if (timecmp(prev->tout + life / 2 + 1, now) >= 0) {
+	    vstring_memcpy(buffer, (char *) prev, sizeof(*prev));
+	    return (TLS_MGR_STAT_OK);
+	}
+    }
+    if (name)
+	return (TLS_MGR_STAT_ERR);
+
+    /*
+     * new <- tlsmgr(8), prev <- curr, curr <- new.
+     */
+    new = prev ? prev : (TLS_TICKET_KEY *) mymalloc(sizeof(*new));
+    prev = curr;
+    curr = new;
+
+    new->tout = now + life / 2 + 1;
+    if (RAND_bytes(new->name, TLS_TICKET_NAMELEN) <= 0
+	|| RAND_bytes(new->bits, TLS_TICKET_KEYLEN) <= 0
+	|| RAND_bytes(new->hmac, TLS_TICKET_MACLEN) <= 0)
+	return (TLS_MGR_STAT_ERR);
+
+    vstring_memcpy(buffer, (char *) new, sizeof(*new));
+    return (TLS_MGR_STAT_OK);
+}
+
 /* tlsmgr_loop - TLS manager main loop */
 
 static int tlsmgr_loop(char *unused_name, char **unused_argv)
@@ -664,6 +726,22 @@ static void tlsmgr_service(VSTREAM *client_stream, char *unused_service,
 	    }
 	    attr_print(client_stream, ATTR_FLAG_NONE,
 		       ATTR_TYPE_INT, MAIL_ATTR_STATUS, status,
+		       ATTR_TYPE_END);
+	}
+
+	/*
+	 * RFC 5077 TLS session ticket keys
+	 */
+	else if (STREQ(STR(request), TLS_MGR_REQ_TKTKEY)) {
+	    if (attr_scan(client_stream, ATTR_FLAG_STRICT,
+			  ATTR_TYPE_DATA, TLS_MGR_ATTR_KEYNAME, buffer,
+			  ATTR_TYPE_END) == 1) {
+		status = tlsmgr_tktkey(buffer);
+	    }
+	    attr_print(client_stream, ATTR_FLAG_NONE,
+		       ATTR_TYPE_INT, MAIL_ATTR_STATUS, status,
+		       ATTR_TYPE_DATA, TLS_MGR_ATTR_KEYBUF,
+		       LEN(buffer), STR(buffer),
 		       ATTR_TYPE_END);
 	}
 

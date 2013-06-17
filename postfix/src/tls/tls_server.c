@@ -141,6 +141,7 @@
 #include <msg.h>
 #include <hex_code.h>
 #include <iostuff.h>			/* non-blocking */
+#include <timecmp.h>
 
 /* Global library. */
 
@@ -148,9 +149,9 @@
 
 /* TLS library. */
 
-#include <tls_mgr.h>
 #define TLS_INTERNAL
 #include <tls.h>
+#include <tls_mgr.h>
 
 #define STR(x)	vstring_str(x)
 #define LEN(x)	VSTRING_LEN(x)
@@ -220,7 +221,7 @@ static SSL_SESSION *get_server_session_cb(SSL *ssl, unsigned char *session_id,
 static void uncache_session(SSL_CTX *ctx, TLS_SESS_STATE *TLScontext)
 {
     VSTRING *cache_id;
-    SSL_SESSION *session = SSL_get_session(TLScontext->con);
+    SSL_SESSION *session = SSL_get0_session(TLScontext->con);
 
     SSL_CTX_remove_session(ctx, session);
 
@@ -276,6 +277,65 @@ static int new_server_session_cb(SSL *ssl, SSL_SESSION *session)
     return (1);
 }
 
+#define NOENGINE	((ENGINE *) 0)
+#define TLS_DENY_TKT	0		/* Neither accept nor issue */
+#define TLS_ACCEPT_TKT	1		/* Issue new or accept existing */
+#define TLS_REISSUE_TKT	2		/* Accept existing and re-issue */
+
+/* ticket_cb - configure tls session ticket encrypt/decrypt context */
+
+static int ticket_cb(SSL *con, unsigned char name[], unsigned char iv[],
+		          EVP_CIPHER_CTX * ctx, HMAC_CTX * hctx, int create)
+{
+    static const EVP_MD *sha256;
+    static const EVP_CIPHER *aes128;
+    TLS_SESS_STATE *TLScontext = SSL_get_ex_data(con, TLScontext_index);
+    TLS_TICKET_KEY *key;
+    int     ret = TLS_DENY_TKT;
+
+    if ((!sha256 && (sha256 = EVP_sha256()) == 0)
+	|| (!aes128 && (aes128 = EVP_aes_128_cbc()) == 0)
+	|| (key = tls_mgr_tktkey(TLScontext, create ? 0 : name)) == 0
+	|| (create && RAND_bytes(iv, TLS_TICKET_IVLEN) <= 0))
+	return (ret);
+    ret = TLS_ACCEPT_TKT;
+
+    HMAC_Init_ex(hctx, key->hmac, TLS_TICKET_MACLEN, sha256, NOENGINE);
+
+    if (create) {
+	EVP_EncryptInit_ex(ctx, aes128, NOENGINE, key->bits, iv);
+	memcpy((char *) name, (char *) key->name, TLS_TICKET_NAMELEN);
+    } else {
+	EVP_DecryptInit_ex(ctx, aes128, NOENGINE, key->bits, iv);
+#ifdef session_ticket_debug
+
+	/*
+	 * Refresh tickets that are past the ticket issuing lifetime of the
+	 * issuing key.  This is only useful if session ticket key validity
+	 * for issuing new tickets is substantially shorter than the maximum
+	 * session lifetime.  We set the session ticket key issuing validity
+	 * to 1/2 of the session lifetime limit, and allow it to validate
+	 * previously issued tickets for another 1/2 lifetime.  Worst-case, a
+	 * session ticket created late in its issuer key validity reduces the
+	 * effective session lifetime, by a factor of 2.  This is not worth
+	 * the risk of interoperability issues with clients (by issuing
+	 * tickets for both new and existing sessions).  With the #ifdef
+	 * in-place, we only issue tickets with full handshakes that create
+	 * new sessions.
+	 * 
+	 * Enable this code when testing the client-side support for mid-session
+	 * ticket updates.
+	 */
+	if (timecmp(key->tout, time((time_t *) 0)) < 0) {
+	    if (TLScontext->log_mask & TLS_LOG_CACHE)
+		msg_info("Session ticket valid, requesting renewal");
+	    ret = TLS_REISSUE_TKT;
+	}
+#endif
+    }
+    return (TLScontext->ticketed = ret);
+}
+
 /* tls_server_init - initialize the server-side TLS engine */
 
 TLS_APPL_STATE *tls_server_init(const TLS_SERVER_INIT_PROPS *props)
@@ -284,6 +344,7 @@ TLS_APPL_STATE *tls_server_init(const TLS_SERVER_INIT_PROPS *props)
     long    off = 0;
     int     verify_flags = SSL_VERIFY_NONE;
     int     cachable;
+    int     ticketable;
     int     protomask;
     TLS_APPL_STATE *app_ctx;
     int     log_mask;
@@ -384,6 +445,15 @@ TLS_APPL_STATE *tls_server_init(const TLS_SERVER_INIT_PROPS *props)
      * Protocol work-arounds, OpenSSL version dependent.
      */
     off |= tls_bug_bits();
+#if defined(SSL_OP_NO_TICKET) && !defined(OPENSSL_NO_TLSEXT)
+    ticketable = (props->scache_timeout > 0 && !(off & SSL_OP_NO_TICKET));
+    if (ticketable)
+	SSL_CTX_set_tlsext_ticket_key_cb(server_ctx, ticket_cb);
+    else
+	off |= SSL_OP_NO_TICKET;
+#else
+    ticketable = 0;
+#endif
     SSL_CTX_set_options(server_ctx, off);
 
     /*
@@ -531,8 +601,9 @@ TLS_APPL_STATE *tls_server_init(const TLS_SERVER_INIT_PROPS *props)
 
     if (tls_mgr_policy(props->cache_type, &cachable) != TLS_MGR_STAT_OK)
 	cachable = 0;
+    cachable &= (props->scache_timeout > 0);
 
-    if (cachable || props->set_sessid) {
+    if (cachable || ticketable || props->set_sessid) {
 
 	/*
 	 * Initialize the session cache.
@@ -571,7 +642,10 @@ TLS_APPL_STATE *tls_server_init(const TLS_SERVER_INIT_PROPS *props)
 	 * cache timeout at least as high as the external cache timeout. This
 	 * applies even if no internal cache is used.
 	 */
-	SSL_CTX_set_timeout(server_ctx, props->scache_timeout);
+	if (props->scache_timeout >= TLS_TICKET_LIFEMIN)
+	    SSL_CTX_set_timeout(server_ctx, props->scache_timeout);
+	else
+	    SSL_CTX_set_timeout(server_ctx, TLS_TICKET_LIFEMIN);
     } else {
 
 	/*
@@ -739,7 +813,8 @@ TLS_SESS_STATE *tls_server_post_accept(TLS_SESS_STATE *TLScontext)
      */
     TLScontext->session_reused = SSL_session_reused(TLScontext->con);
     if ((TLScontext->log_mask & TLS_LOG_CACHE) && TLScontext->session_reused)
-	msg_info("%s: Reusing old session", TLScontext->namaddr);
+	msg_info("%s: Reusing old session%s", TLScontext->namaddr,
+		 TLScontext->ticketed ? " (RFC 5077 session ticket)" : "");
 
     /*
      * Let's see whether a peer certificate is available and what is the

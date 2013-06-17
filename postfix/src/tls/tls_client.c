@@ -147,9 +147,9 @@
 
 /* TLS library. */
 
-#include <tls_mgr.h>
 #define TLS_INTERNAL
 #include <tls.h>
+#include <tls_mgr.h>
 
 /* Application-specific. */
 

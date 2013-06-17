@@ -104,14 +104,23 @@
 #include <vstring.h>
 #include <attr.h>
 #include <attr_clnt.h>
+#include <timecmp.h>
+#include <mymalloc.h>
 
 /* Global library. */
 
 #include <mail_params.h>
 #include <mail_proto.h>
+
+/* TLS library. */
+#define TLS_INTERNAL
+#include <tls.h>
 #include <tls_mgr.h>
 
 /* Application-specific. */
+
+#define STR(x) vstring_str(x)
+#define LEN(x) VSTRING_LEN(x)
 
 static ATTR_CLNT *tls_mgr;
 
@@ -287,6 +296,93 @@ int     tls_mgr_delete(const char *cache_type, const char *cache_id)
     return (status);
 }
 
+/* tls_mgr_tktkey - session ticket key lookup with local 2-element cache */
+
+TLS_TICKET_KEY *tls_mgr_tktkey(TLS_SESS_STATE *TLScontext, unsigned char name[])
+{
+    static TLS_TICKET_KEY *prev;
+    static TLS_TICKET_KEY *curr;
+    static VSTRING *keybuf;
+    int     status;
+    size_t  len;
+    char   *keyname;
+    time_t  now = time((time_t *) 0);
+    SSL    *con = TLScontext->con;
+    long    life = SSL_CTX_get_timeout(SSL_get_SSL_CTX(con));
+    TLS_TICKET_KEY *new;
+
+    /*
+     * When name == 0 we are issuing a ticket, otherwise decrypting an
+     * existing ticket with the given key name.  For new tickets we always
+     * use the current key if unexpired.  For existing tickets, we use either
+     * the current or previous key with a validitation expiration that is
+     * life/2 longer than the signing expiration.
+     */
+    if (curr
+	&& (name == 0
+	    || memcmp(name, curr->name, TLS_TICKET_NAMELEN) == 0)) {
+	if (timecmp(curr->tout + (name ? life / 2 : 0) + 1, now) >= 0) {
+	    if (TLScontext->log_mask & TLS_LOG_CACHE)
+		msg_info("Reusing session ticket keys expiring at: %ld",
+			 (long) curr->tout);
+	    return (curr);
+	}
+    } else if (prev
+	       && name
+	       && memcmp(name, prev->name, TLS_TICKET_NAMELEN) == 0) {
+	if (timecmp(prev->tout + life / 2 + 1, now) > 0) {
+	    if (TLScontext->log_mask & TLS_LOG_CACHE)
+		msg_info("Reusing session ticket keys expiring at: %ld",
+			 (long) prev->tout);
+	    return (prev);
+	}
+    }
+
+    /*
+     * Create the tlsmgr client handle.
+     */
+    if (tls_mgr == 0)
+	tls_mgr_open();
+    if (keybuf == 0)
+	keybuf = vstring_alloc(sizeof(*new));
+
+    /*
+     * Send the request and receive the reply.
+     */
+    keyname = name ? (char *) name : "";
+    len = name ? TLS_TICKET_NAMELEN : 0;
+    if (attr_clnt_request(tls_mgr,
+			  ATTR_FLAG_NONE,	/* Request */
+			ATTR_TYPE_STR, TLS_MGR_ATTR_REQ, TLS_MGR_REQ_TKTKEY,
+			  ATTR_TYPE_DATA, TLS_MGR_ATTR_KEYNAME, len, keyname,
+			  ATTR_TYPE_END,
+			  ATTR_FLAG_MISSING,	/* Reply */
+			  ATTR_TYPE_INT, TLS_MGR_ATTR_STATUS, &status,
+			  ATTR_TYPE_DATA, TLS_MGR_ATTR_KEYBUF, keybuf,
+			  ATTR_TYPE_END) != 2
+	|| status != TLS_MGR_STAT_OK
+	|| LEN(keybuf) != sizeof(*curr)) {
+	if (TLScontext->log_mask & TLS_LOG_CACHE)
+	    msg_info("No%s session ticket key found by tlsmgr",
+		     name ? " matching" : "");
+	return (0);
+    }
+
+    /*
+     * new <- tlsmgr(8), prev <- curr, curr <- new.
+     */
+    new = prev ? prev : (TLS_TICKET_KEY *) mymalloc(sizeof(*new));
+    prev = curr;
+    curr = new;
+    memcpy((char *) new, STR(keybuf), sizeof(*new));
+
+    if (TLScontext->log_mask & TLS_LOG_CACHE)
+	msg_info("Using session ticket keys expiring at: %ld",
+		 (long) new->tout);
+
+    return (curr);
+}
+
 #ifdef TEST
 
 /* System library. */
@@ -305,9 +401,6 @@ int     tls_mgr_delete(const char *cache_type, const char *cache_id)
 #include <config.h>
 
 /* Application-specific. */
-
-#define STR(x) vstring_str(x)
-#define LEN(x) VSTRING_LEN(x)
 
 int     main(int unused_ac, char **av)
 {
@@ -331,7 +424,6 @@ int     main(int unused_ac, char **av)
 	    argv_free(argv);
 	    continue;
 	}
-
 #define COMMAND(argv, str, len) \
     (strcasecmp(argv->argv[0], str) == 0 && argv->argc == len)
 

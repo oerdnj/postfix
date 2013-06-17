@@ -576,6 +576,19 @@ extern int tls_validate_digest(const char *);
 extern void tls_int_seed(void);
 extern int tls_ext_seed(int);
 
+#define TLS_TICKET_NAMELEN	16	/* RFC 5077 ticket key name length */
+#define TLS_TICKET_IVLEN	16	/* RFC 5077 ticket IV length */
+#define TLS_TICKET_KEYLEN	16	/* AES-128-CBC key size */
+#define TLS_TICKET_MACLEN	16	/* SHA-256 collision strength */
+#define TLS_TICKET_LIFEMIN	120	/* May you live to 120! */
+
+typedef struct TLS_TICKET_KEY {
+    unsigned char name[TLS_TICKET_NAMELEN];
+    unsigned char bits[TLS_TICKET_KEYLEN];
+    unsigned char hmac[TLS_TICKET_MACLEN];
+    time_t  tout;
+}       TLS_TICKET_KEY;
+
 #endif					/* TLS_INTERNAL */
 
 /* LICENSE

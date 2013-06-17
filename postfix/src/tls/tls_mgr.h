@@ -23,6 +23,7 @@
 #define TLS_MGR_REQ_LOOKUP	"lookup"
 #define TLS_MGR_REQ_UPDATE	"update"
 #define TLS_MGR_REQ_DELETE	"delete"
+#define TLS_MGR_REQ_TKTKEY	"tktkey"
 #define TLS_MGR_ATTR_CACHABLE	"cachable"
 #define TLS_MGR_ATTR_CACHE_TYPE	"cache_type"
 #define TLS_MGR_ATTR_SEED	"seed"
@@ -30,6 +31,8 @@
 #define TLS_MGR_ATTR_SESSION	"session"
 #define TLS_MGR_ATTR_SIZE	"size"
 #define TLS_MGR_ATTR_STATUS	"status"
+#define TLS_MGR_ATTR_KEYNAME	"keyname"
+#define TLS_MGR_ATTR_KEYBUF	"keybuf"
 
  /*
   * TLS manager request status codes.
@@ -46,6 +49,7 @@ extern int tls_mgr_policy(const char *, int *);
 extern int tls_mgr_lookup(const char *, const char *, VSTRING *);
 extern int tls_mgr_update(const char *, const char *, const char *, ssize_t);
 extern int tls_mgr_delete(const char *, const char *);
+extern TLS_TICKET_KEY *tls_mgr_tktkey(TLS_SESS_STATE *, unsigned char[]);
 
 /* LICENSE
 /* .ad
