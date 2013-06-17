@@ -111,9 +111,14 @@
 
 #include <mail_params.h>
 #include <mail_proto.h>
+
+/* TLS library. */
 #include <tls_mgr.h>
 
 /* Application-specific. */
+
+#define STR(x) vstring_str(x)
+#define LEN(x) VSTRING_LEN(x)
 
 static ATTR_CLNT *tls_mgr;
 
@@ -174,7 +179,7 @@ int     tls_mgr_seed(VSTRING *buf, int len)
 
 /* tls_mgr_policy - request caching policy */
 
-int     tls_mgr_policy(const char *cache_type, int *cachable)
+int     tls_mgr_policy(const char *cache_type, int *cachable, int *timeout)
 {
     int     status;
 
@@ -195,7 +200,8 @@ int     tls_mgr_policy(const char *cache_type, int *cachable)
 			  ATTR_FLAG_MISSING,	/* Reply attributes */
 			  ATTR_TYPE_INT, TLS_MGR_ATTR_STATUS, &status,
 			  ATTR_TYPE_INT, TLS_MGR_ATTR_CACHABLE, cachable,
-			  ATTR_TYPE_END) != 2)
+			  ATTR_TYPE_INT, TLS_MGR_ATTR_SESSTOUT, timeout,
+			  ATTR_TYPE_END) != 3)
 	status = TLS_MGR_STAT_FAIL;
     return (status);
 }
@@ -288,6 +294,65 @@ int     tls_mgr_delete(const char *cache_type, const char *cache_id)
     return (status);
 }
 
+/* request_scache_key - ask tlsmgr(8) for matching key */
+
+static TLS_TICKET_KEY *request_scache_key(unsigned char name[])
+{
+    TLS_TICKET_KEY tmp;
+    static VSTRING *keybuf;
+    char   *keyname;
+    size_t  len;
+    int     status;
+
+    /*
+     * Create the tlsmgr client handle.
+     */
+    if (tls_mgr == 0)
+	tls_mgr_open();
+
+    if (keybuf == 0)
+	keybuf = vstring_alloc(sizeof(tmp));
+
+    /* In tlsmgr requests we encode null key names as empty strings. */
+    keyname = name ? (char *) name : "";
+    len = name ? TLS_TICKET_NAMELEN : 0;
+
+    /*
+     * Send the request and receive the reply.
+     */
+    if (attr_clnt_request(tls_mgr,
+			  ATTR_FLAG_NONE,	/* Request */
+			ATTR_TYPE_STR, TLS_MGR_ATTR_REQ, TLS_MGR_REQ_TKTKEY,
+			  ATTR_TYPE_DATA, TLS_MGR_ATTR_KEYNAME, len, keyname,
+			  ATTR_TYPE_END,
+			  ATTR_FLAG_MISSING,	/* Reply */
+			  ATTR_TYPE_INT, TLS_MGR_ATTR_STATUS, &status,
+			  ATTR_TYPE_DATA, TLS_MGR_ATTR_KEYBUF, keybuf,
+			  ATTR_TYPE_END) != 2
+	|| status != TLS_MGR_STAT_OK
+	|| LEN(keybuf) != sizeof(tmp))
+	return (0);
+
+    memcpy((char *) &tmp, STR(keybuf), sizeof(tmp));
+    return (tls_scache_key_rotate(&tmp));
+}
+
+/* tls_mgr_key - session ticket key lookup, local cache, then tlsmgr(8) */
+
+TLS_TICKET_KEY *tls_mgr_key(unsigned char name[], int timeout)
+{
+    TLS_TICKET_KEY *key = 0;
+    time_t  now = time((time_t *) 0);
+
+    /* A zero timeout disables session tickets. */
+    if (timeout <= 0)
+	return (0);
+
+    if ((key = tls_scache_key(name, now, timeout)) == 0)
+	key = request_scache_key(name);
+    return (key);
+}
+
 #ifdef TEST
 
 /* System library. */
@@ -306,9 +371,6 @@ int     tls_mgr_delete(const char *cache_type, const char *cache_id)
 #include <config.h>
 
 /* Application-specific. */
-
-#define STR(x) vstring_str(x)
-#define LEN(x) VSTRING_LEN(x)
 
 int     main(int unused_ac, char **av)
 {
