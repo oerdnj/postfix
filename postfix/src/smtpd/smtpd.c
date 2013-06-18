@@ -773,7 +773,7 @@
 /*	applies in the context of the SMTP END-OF-DATA command.
 /* .PP
 /*	Available in Postfix version 2.10 and later:
-/* .IP "\fBsmtpd_relay_restrictions (permit_mynetworks, reject_unauth_destination)\fR"
+/* .IP "\fBsmtpd_relay_restrictions (permit_mynetworks, permit_sasl_authenticated, defer_unauth_destination)\fR"
 /*	Access restrictions for mail relay control that the Postfix
 /*	SMTP server applies in the context of the RCPT TO command, before
 /*	smtpd_recipient_restrictions.
