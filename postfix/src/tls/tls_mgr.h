@@ -55,7 +55,7 @@ extern int tls_mgr_policy(const char *, int *, int *);
 extern int tls_mgr_lookup(const char *, const char *, VSTRING *);
 extern int tls_mgr_update(const char *, const char *, const char *, ssize_t);
 extern int tls_mgr_delete(const char *, const char *);
-extern TLS_TICKET_KEY *tls_mgr_key(unsigned char[], int);
+extern TLS_TICKET_KEY *tls_mgr_key(unsigned char *, int);
 
 /* LICENSE
 /* .ad

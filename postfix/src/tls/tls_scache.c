@@ -36,6 +36,14 @@
 /*	int	tls_scache_delete(cache, cache_id)
 /*	TLS_SCACHE *cache;
 /*	const char *cache_id;
+/*
+/*	TLS_TICKET_KEY *tls_scache_key(keyname, now, timeout)
+/*	unsigned char *keyname;
+/*	time_t	now;
+/*	int	timeout;
+/*
+/*	TLS_TICKET_KEY *tls_scache_key_rotate(newkey)
+/*	TLS_TICKET_KEY *newkey;
 /* DESCRIPTION
 /*	This module maintains Postfix TLS session cache files.
 /*	each session is stored under a lookup key (hostname or
@@ -67,6 +75,13 @@
 /*	tls_scache_delete() removes the specified cache entry from
 /*	the specified TLS session cache.
 /*
+/*	tls_scache_key() locates a TLS session ticket key in a 2-element
+/*	in-memory cache.  A null result is returned if no unexpired matching
+/*	key is found.
+/*
+/*	tls_scache_key_rotate() saves a TLS session tickets key in the
+/*	in-memory cache.
+/*
 /*	Arguments:
 /* .IP dbname
 /*	The base name of the session cache file.
@@ -95,6 +110,18 @@
 /*
 /*	Specify TLS_SCACHE_DONT_NEED_SESSION to avoid
 /*	saving the session information in the cache entry.
+/* .IP keyname
+/*	Is null when requesting the current encryption keys.  Otherwise,
+/*	keyname is a pointer to an array of TLS_TICKET_NAMELEN unsigned
+/*	chars (not NUL terminated) that is an identifier for a key
+/*	previously used to encrypt a session ticket.
+/* .IP now
+/*	Current epoch time passed by caller.
+/* .IP timeout
+/*	TLS session ticket encryption lifetime.
+/* .IP newkey
+/*	TLS session ticket key obtained from tlsmgr(8) to be added to
+ *	internal cache.
 /* DIAGNOSTICS
 /*	These routines terminate with a fatal run-time error
 /*	for unrecoverable database errors. This allows the
@@ -509,7 +536,7 @@ void    tls_scache_close(TLS_SCACHE *cp)
 
 /* tls_scache_key - find session ticket key for given key name */
 
-TLS_TICKET_KEY *tls_scache_key(unsigned char *name, time_t now, int timeout)
+TLS_TICKET_KEY *tls_scache_key(unsigned char *keyname, time_t now, int timeout)
 {
     int     i;
 
@@ -523,9 +550,9 @@ TLS_TICKET_KEY *tls_scache_key(unsigned char *name, time_t now, int timeout)
      * current or previous key with a validation expiration that is timeout
      * longer than the signing expiration.
      */
-    if (name) {
+    if (keyname) {
 	for (i = 0; i < 2 && keys[i]; ++i) {
-	    if (memcmp(name, keys[i]->name, TLS_TICKET_NAMELEN) == 0) {
+	    if (memcmp(keyname, keys[i]->name, TLS_TICKET_NAMELEN) == 0) {
 		if (timecmp(keys[i]->tout + timeout, now) > 0)
 		    return (keys[i]);
 		break;
@@ -540,25 +567,27 @@ TLS_TICKET_KEY *tls_scache_key(unsigned char *name, time_t now, int timeout)
 
 /* tls_scache_key_rotate - rotate session ticket keys */
 
-TLS_TICKET_KEY *tls_scache_key_rotate(TLS_TICKET_KEY *new)
+TLS_TICKET_KEY *tls_scache_key_rotate(TLS_TICKET_KEY *newkey)
 {
 
     /*
      * Allocate or re-use storage of retired key, then overwrite it, since
-     * caller's key data is ephemeral. Finally rotate if required.
+     * caller's key data is ephemeral.
      */
-    if (keys[1] && keys[1]->tout > keys[0]->tout) {
-	memcpy(keys[0], new, sizeof(*new));
-	new = keys[0];
-    } else {
-	if (keys[1] == 0)
-	    keys[1] = (TLS_TICKET_KEY *) mymalloc(sizeof(*new));
-	memcpy(keys[1], new, sizeof(*new));
-	new = keys[1];
+    if (keys[1] == 0)
+	keys[1] = (TLS_TICKET_KEY *) mymalloc(sizeof(*newkey));
+    *keys[1] = *newkey;
+    newkey = keys[1];
+
+    /*
+     * Rotate if required, ensuring that the keys are sorted by expiration
+     * time with keys[0] expiring last.
+     */
+    if (keys[0] == 0 || keys[0]->tout < keys[1]->tout) {
 	keys[1] = keys[0];
-	keys[0] = new;
+	keys[0] = newkey;
     }
-    return (new);
+    return (newkey);
 }
 
 #endif

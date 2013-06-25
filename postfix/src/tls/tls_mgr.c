@@ -28,6 +28,10 @@
 /*	int	tls_mgr_delete(cache_type, cache_id)
 /*	const char *cache_type;
 /*	const char *cache_id;
+/*
+/*	TLS_TICKET_KEY *tls_mgr_key(keyname, timeout)
+/*	unsigned char *keyname;
+/*	int	timeout;
 /* DESCRIPTION
 /*	These routines communicate with the tlsmgr(8) server for
 /*	entropy and session cache management. Since these are
@@ -48,6 +52,9 @@
 /*	tls_mgr_delete() removes specified session from
 /*	the specified session cache.
 /*
+/*	tls_mgr_key() is used to retrieve the current TLS session ticket
+/*	encryption or decryption keys.
+
 /*	Arguments
 /* .IP cache_type
 /*	One of TLS_MGR_SCACHE_SMTPD, TLS_MGR_SCACHE_SMTP or
@@ -61,6 +68,18 @@
 /*	The result or input buffer.
 /* .IP len
 /*	The length of the input buffer, or the amount of data requested.
+/* .IP keyname
+/*	Is null when requesting the current encryption keys.  Otherwise,
+/*	keyname is a pointer to an array of TLS_TICKET_NAMELEN unsigned
+/*	chars (not NUL terminated) that is an identifier for a key
+/*	previously used to encrypt a session ticket.  When encrypting
+/*	a null result indicates that session tickets are not supported, when
+/*	decrypting it indicates that no matching keys were found.
+/* .IP timeout
+/*	The encryption key timeout.  Once a key has been active for this many
+/*	seconds it is retired and used only for decrypting previously issued
+/*	session tickets for another timeout seconds, and is then destroyed.
+/*	The timeout must not be longer than half the SSL session lifetime.
 /* DIAGNOSTICS
 /*	All client functions return one of the following status codes:
 /* .IP TLS_MGR_STAT_OK
@@ -296,11 +315,11 @@ int     tls_mgr_delete(const char *cache_type, const char *cache_id)
 
 /* request_scache_key - ask tlsmgr(8) for matching key */
 
-static TLS_TICKET_KEY *request_scache_key(unsigned char name[])
+static TLS_TICKET_KEY *request_scache_key(unsigned char *keyname)
 {
     TLS_TICKET_KEY tmp;
     static VSTRING *keybuf;
-    char   *keyname;
+    char   *name;
     size_t  len;
     int     status;
 
@@ -314,8 +333,8 @@ static TLS_TICKET_KEY *request_scache_key(unsigned char name[])
 	keybuf = vstring_alloc(sizeof(tmp));
 
     /* In tlsmgr requests we encode null key names as empty strings. */
-    keyname = name ? (char *) name : "";
-    len = name ? TLS_TICKET_NAMELEN : 0;
+    name = keyname ? (char *) keyname : "";
+    len = keyname ? TLS_TICKET_NAMELEN : 0;
 
     /*
      * Send the request and receive the reply.
@@ -323,7 +342,7 @@ static TLS_TICKET_KEY *request_scache_key(unsigned char name[])
     if (attr_clnt_request(tls_mgr,
 			  ATTR_FLAG_NONE,	/* Request */
 			ATTR_TYPE_STR, TLS_MGR_ATTR_REQ, TLS_MGR_REQ_TKTKEY,
-			  ATTR_TYPE_DATA, TLS_MGR_ATTR_KEYNAME, len, keyname,
+			  ATTR_TYPE_DATA, TLS_MGR_ATTR_KEYNAME, len, name,
 			  ATTR_TYPE_END,
 			  ATTR_FLAG_MISSING,	/* Reply */
 			  ATTR_TYPE_INT, TLS_MGR_ATTR_STATUS, &status,
@@ -339,7 +358,7 @@ static TLS_TICKET_KEY *request_scache_key(unsigned char name[])
 
 /* tls_mgr_key - session ticket key lookup, local cache, then tlsmgr(8) */
 
-TLS_TICKET_KEY *tls_mgr_key(unsigned char name[], int timeout)
+TLS_TICKET_KEY *tls_mgr_key(unsigned char *keyname, int timeout)
 {
     TLS_TICKET_KEY *key = 0;
     time_t  now = time((time_t *) 0);
@@ -348,8 +367,8 @@ TLS_TICKET_KEY *tls_mgr_key(unsigned char name[], int timeout)
     if (timeout <= 0)
 	return (0);
 
-    if ((key = tls_scache_key(name, now, timeout)) == 0)
-	key = request_scache_key(name);
+    if ((key = tls_scache_key(keyname, now, timeout)) == 0)
+	key = request_scache_key(keyname);
     return (key);
 }
 
@@ -394,7 +413,6 @@ int     main(int unused_ac, char **av)
 	    argv_free(argv);
 	    continue;
 	}
-
 #define COMMAND(argv, str, len) \
     (strcasecmp(argv->argv[0], str) == 0 && argv->argc == len)
 
