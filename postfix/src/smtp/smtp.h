@@ -354,10 +354,9 @@ extern int smtp_session_passivate(SMTP_SESSION *, VSTRING *, VSTRING *);
 extern SMTP_SESSION *smtp_session_activate(int, SMTP_ITERATOR *, VSTRING *, VSTRING *);
 
  /*
-  * What's in a name?  With DANE TLSA we need the rr->rname (if validated).
+  * What's in a name?
   */
-#define SMTP_HNAME(rr) ( (var_smtp_cname_overr || rr->dnssec_valid) ? \
-			 (rr)->rname : (rr)->qname )
+#define SMTP_HNAME(rr) (var_smtp_cname_overr ? (rr)->rname : (rr)->qname)
 
  /*
   * smtp_connect.c

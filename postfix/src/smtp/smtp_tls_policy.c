@@ -768,7 +768,8 @@ static void dane_init(SMTP_TLS_POLICY *tls, SMTP_ITERATOR *iter)
 	return;
     }
     /* When TLSA lookups fail, we defer the message */
-    if ((dane = tls_dane_resolve(STR(iter->host), "tcp", iter->port)) == 0) {
+    if ((dane = tls_dane_resolve(iter->rr->qname, iter->rr->rname, "tcp",
+				 iter->port)) == 0) {
 	tls->level = TLS_LEV_INVALID;
 	dsb_simple(tls->why, "4.7.5", "TLSA lookup error for %s:%u",
 		   STR(iter->host), ntohs(iter->port));
@@ -818,7 +819,7 @@ static void dane_init(SMTP_TLS_POLICY *tls, SMTP_ITERATOR *iter)
      */
     if (TLS_DANE_HASTA(dane)) {
 	tls->matchargv = argv_alloc(2);
-	argv_add(tls->matchargv, "hostname", "nexthop", ARGV_END);
+	argv_add(tls->matchargv, dane->base_domain, "nexthop", ARGV_END);
     } else if (!TLS_DANE_HASEE(dane))
 	msg_panic("empty DANE match list");
     tls->dane = dane;

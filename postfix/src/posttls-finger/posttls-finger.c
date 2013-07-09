@@ -433,7 +433,7 @@ typedef struct STATE {
 
 static DNS_RR *host_addr(STATE *, const char *);
 
-#define HNAME(addr) (addr->dnssec_valid ? addr->rname : addr->qname)
+#define HNAME(addr) (addr->qname)
 
  /*
   * Structure with broken-up SMTP server response.
@@ -1170,7 +1170,8 @@ static int dane_host_level(STATE *state, DNS_RR *addr)
 		tls_dane_free(state->ddane);
 
 	    /* When TLSA lookups fail, next host */
-	    state->ddane = tls_dane_resolve(HNAME(addr), "tcp", state->port);
+	    state->ddane = tls_dane_resolve(addr->qname, addr->rname, "tcp",
+					    state->port);
 	    if (!state->ddane) {
 		dsb_simple(state->why, "4.7.5",
 			   "TLSA lookup error for %s:%u",
@@ -1193,7 +1194,7 @@ static int dane_host_level(STATE *state, DNS_RR *addr)
 		if (state->match)
 		    argv_free(state->match);
 		argv_add(state->match = argv_alloc(2),
-			 "hostname", "nexthop", ARGV_END);
+			 state->ddane->base_domain, "nexthop", ARGV_END);
 	    }
 	} else {
 	    level = TLS_LEV_SECURE;
