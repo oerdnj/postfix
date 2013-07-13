@@ -865,10 +865,12 @@ TLS_DANE *tls_dane_resolve(const char *qname, const char *rname,
     /*
      * Try the rname first, if nothing there, try the qname.  Note, lookup
      * errors are distinct from success with nothing found.  If the rname
-     * lookup fails we don't try the qname.
+     * lookup fails we don't try the qname.  The rname may be null when only
+     * the qname is in a secure zone.
      */
-    dane = resolve_host(rname, proto, port);
-    if (tls_dane_notfound(dane) && strcmp(qname, rname) != 0)
+    if (rname)
+	dane = resolve_host(rname, proto, port);
+    if (!rname || (tls_dane_notfound(dane) && strcmp(qname, rname) != 0))
 	dane = resolve_host(qname, proto, port);
     if (dane->flags & TLS_DANE_FLAG_ERROR)
 	return (0);

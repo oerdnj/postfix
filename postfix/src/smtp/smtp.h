@@ -55,17 +55,18 @@ typedef struct SMTP_ITERATOR {
     VSTRING *addr;			/* printable address or empty */
     unsigned port;			/* network byte order or null */
     struct DNS_RR *rr;			/* DNS resource record or null */
+    struct DNS_RR *mx;			/* DNS resource record or null */
     /* Private members. */
     VSTRING *saved_dest;		/* saved current nexthop */
     struct SMTP_STATE *parent;		/* parent linkage */
 } SMTP_ITERATOR;
 
-#define SMTP_ITER_INIT(iter, _dest, _host, _addr, _port, _rr, state) do { \
+#define SMTP_ITER_INIT(iter, _dest, _host, _addr, _port, state) do { \
 	vstring_strcpy((iter)->dest, (_dest)); \
 	vstring_strcpy((iter)->host, (_host)); \
 	vstring_strcpy((iter)->addr, (_addr)); \
 	(iter)->port = (_port); \
-	(iter)->rr = (_rr); \
+	(iter)->mx = (iter)->rr = 0; \
 	vstring_strcpy((iter)->saved_dest, ""); \
 	(iter)->parent = (state); \
     } while (0)

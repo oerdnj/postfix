@@ -17,7 +17,7 @@
   * Internal interfaces.
   */
 extern DNS_RR *smtp_host_addr(const char *, int, DSN_BUF *);
-extern DNS_RR *smtp_domain_addr(char *, int, DSN_BUF *, int *);
+extern DNS_RR *smtp_domain_addr(char *, SMTP_ITERATOR *, int, DSN_BUF *, int *);
 
 /* LICENSE
 /* .ad
